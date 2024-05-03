@@ -1,4 +1,6 @@
 import numpy as np
+import os
+import h5py
 
 # Sigmoid activation function implementation - takes single scalar input.
 def sigmoid(x, derivative=False):
@@ -16,14 +18,28 @@ def ReLU(x, derivative=False):
 
 # Simple implementation of Layer object - with forward pass defined as a method.
 class Layer:
-    def __init__(self, input_dim, output_dim,  activation_function, position=None):
-        ## TO DO: observe different weight initialisation methods for the optimisation section.
-        self.weights = np.random.randn(input_dim, output_dim) # Initialising weight matrix with random values 
-        self.biases = np.random.randn(output_dim) # Initialising bias vector with random values.
+    def __init__(self, input_dim, output_dim,  activation_function, weight_initialisation=None, bias_initialisation=None, position=None):
+        if weight_initialisation is None:
+            # Random weight initialisation
+            self.weights = np.random.randn(input_dim, output_dim)
+        elif weight_initialisation == "xavier":
+            # Normalised Xavier initialisation - if we choose a deeper architecture this will prevent vanishing gradients.
+            self.weights = np.random.normal(0, np.sqrt(2.0 / (input_dim + output_dim)), (input_dim, output_dim)) 
+        elif weight_initialisation == "normal":
+            # Randomised normal distribution initialisation
+            self.weights = np.random.normal(0, 1, (input_dim, output_dim))
+        
+        if bias_initialisation is None:
+            # Random bias initialisation
+            self.biases = np.random.randn(output_dim) 
+        elif bias_initialisation == "zero":
+            # Zero bias
+            self.biases = np.zeros(output_dim)
+    
         self.activation = activation_function # Setting activation function for the layer
-        self.input_dim = input_dim
+        self.input_dim = input_dim # Saving input and output dimensions
         self.output_dim = output_dim
-        self.position = position
+        self.position = position # Saving position in the network topology
 
     def forward(self, x):
         self.X = x
@@ -43,25 +59,28 @@ class Layer:
         else: 
             dL_dW = np.dot(self.X.T, np.resize(dL_dZ, self.X.shape[0]))
 
-        # Initialize velocity if not already initialized
-        if not hasattr(self, 'velocity_w'):
-            self.velocity_w = np.zeros_like(self.weights)
-            self.velocity_b = np.zeros_like(self.biases)
+        # Using stochastic gradient descent
+        if momentum is not None:
+            # Initialize velocity if not already initialized
+            if not hasattr(self, 'velocity_w'):
+                self.velocity_w = np.zeros_like(self.weights)
+                self.velocity_b = np.zeros_like(self.biases)
 
-        # Update velocity
-        self.velocity_w = momentum * self.velocity_w + learning_rate * dL_dW
-        self.velocity_b = momentum * self.velocity_b + learning_rate * dL_dB
+            # Update velocity
+            self.velocity_w = momentum * self.velocity_w + learning_rate * dL_dW
+            self.velocity_b = momentum * self.velocity_b + learning_rate * dL_dB
 
-        # Update weights and biases (parameters) using velocity
-        self.weights -= self.velocity_w
-        self.biases -= self.velocity_b
+            # Update weights and biases (parameters) using velocity
+            self.weights -= self.velocity_w
+            self.biases -= self.velocity_b
+
         
-        '''
-        # Update weights and biases (parameters)
-        self.weights -= learning_rate * dL_dW
-        self.biases -= learning_rate * dL_dB
-        '''
-
+        # Using standard gradient descent
+        else:
+            # Update weights and biases (parameters)
+            self.weights -= learning_rate * dL_dW
+            self.biases -= learning_rate * dL_dB
+        
         # Return new output gradient to backpropagate
         return dL_dX
     
@@ -71,9 +90,8 @@ class Layer:
 
 
 class ANN:
-    def __init__(self, optimiser, learning_rate, momentum):
+    def __init__(self, learning_rate, momentum):
         self.layers = []
-        self.optimiser = optimiser
         self.learning_rate = learning_rate
         self.momentum = momentum
 
@@ -85,10 +103,16 @@ class ANN:
         output = self.input
 
         # Binary cross-entropy loss
-        loss = -(target * np.log(output) + (1 - target) * np.log(1 - output))
+        #loss = -(target * np.log(output) + (1 - target) * np.log(1 - output))
 
-        # Output layer gradient using binary cross-entropy loss derivative.
-        output_gradient = -(target / output) + (1 - target) / (1 - output)
+        # Binary cross-entropy loss derivative
+        #output_gradient = -(target / output) + (1 - target) / (1 - output)
+
+        # Mean squared loss
+        loss = np.mean((target - output)**2)
+
+        # Mean squared loss derivative
+        output_gradient = -2 * (target - output) 
 
         for layer in reversed(self.layers):
             output_gradient = layer.backward(output_gradient, self.learning_rate, self.momentum)
@@ -102,31 +126,17 @@ class ANN:
             self.input = output
     
     def train(self, x, y, num_epochs):
-        if x.shape[1] != self.layers[0].input_dim:
-            raise Exception("Incorrect input shape for given epoch number")
-        
-        initial_loss = None
-        loss = None
-
-        # Random shuffling of training set to improve generalisation.
-        '''
-        indices = np.arange(len(x))
-        np.random.shuffle(indices)
-        x = x[indices]
-        y = y[indices]
-        '''
-    
         for _ in range(num_epochs):
-            for j in range(x.shape[0]):
-                feature = x[j]
-                label = y[j]
-                if initial_loss is None:
-                    initial_loss = self.backprop(feature, label)
-                    print("Obtained loss: ", initial_loss)
-                else:
-                    loss = self.backprop(feature, label)
-                    print("Obtained loss: ", loss)
-            
+            # Use a subset of the data for training on each epoch (selected randomly)
+            subset_size = int(x.shape[0] * 0.8)
+            indices = np.random.choice(x.shape[0], subset_size, replace=False)
+            x_temp = x[indices]
+            y_temp = y[indices] 
+            for j in range(subset_size):
+                feature = x_temp[j]
+                label = y_temp[j]
+                loss = self.backprop(feature, label)
+                print("Obtained loss: ", loss)  
        
         print(f"Training complete, final loss: {loss}")
 
@@ -144,6 +154,7 @@ class ANN:
                 predictions.append(0)
 
         return np.array(predictions)
+
         
     def build(self, *layers): 
         for i, layer in enumerate(layers):
@@ -155,26 +166,30 @@ class ANN:
 
     # Save model weights into given output path
     def save(self, path):
-        print("Made call to save")
-        layers = {}
-        for layer in self.layers:
-            print("Saving layer: ", layer)
-            layers[f"Layer {layer.position} {layer.activation.__name__}"] = layer.weights
-       
-        np.savez(path, **layers)
+        if os.path.exists(path):
+            os.remove(path)
+        
+        with h5py.File(path, 'w') as hf:
+            hf.attrs[f"Number of layers"] = len(self.layers)
+            for i, layer in enumerate(self.layers):
+                hf.create_dataset(f"layer {i + 1} weights", data=layer.weights)
+                hf.create_dataset(f"layer {i + 1} biases", data=layer.biases)
+                hf.attrs.create(f"layer {i + 1} activation", data=layer.activation.__name__, dtype=h5py.string_dtype())
+    
             
 
     # Load model weights from given input path
     def load(self, path):
-        weights = np.load(path)
-        layers = []
-        for layer_id, weight_mat in weights.items():
-            layers.append(Layer(input_dim=weight_mat.shape[0], 
-                                output_dim=weight_mat.shape[1], 
-                                activation_function=globals()[layer_id.split()[2]]))
-
-        print("Loaded layers: ", layers)
-        self.build(*layers)
+        print("Loading model parameters")
+        with h5py.File(path, 'r') as hf:
+            for i in range(hf.attrs["Number of layers"]):
+                weights = np.array(hf[f"layer {i + 1} weights"])
+                biases = np.array(hf[f"layer {i + 1} biases"])
+                activation = globals()[hf.attrs[f"layer {i + 1} activation"]]
+                layer = Layer(weights.shape[0], weights.shape[1], activation)
+                layer.weights = weights
+                layer.biases = biases
+                self.layers.append(layer)
 
 
     def __repr__(self):
@@ -192,65 +207,37 @@ def extract(training_path):
     features = training_spam[:, 1:]
     return labels, features
 
+def test_accuracy(predictions, labels, name):
+    accuracy = np.count_nonzero(predictions == labels)/labels.shape[0]
+    print(f"Accuracy on {name} data is: {accuracy}")
+
 
 if __name__ == "__main__":
     # Extract features & their supervised labels.
     training_labels, training_features = extract("data/training_spam.csv")
     testing_labels, testing_features = extract("data/testing_spam.csv")
     
-    # Set hyperparameters here. Optimiser=None defaults to standard gradient descent.
-    a = ANN(optimiser=None, learning_rate=0.15, momentum=0.9)
+    # Set hyperparameters here. momentum=None defaults to standard gradient descent.
+    a = ANN(learning_rate=0.08, momentum=None)
             
-    # Define our hidden layers & output. Build the network with these layers.
-    hidden1 = Layer(input_dim=54,   output_dim=128,   activation_function=sigmoid)
-    hidden2 = Layer(input_dim=128,  output_dim=64,   activation_function=sigmoid)
-    output  = Layer(input_dim=64,   output_dim=1,    activation_function=sigmoid)
-    a.build(hidden1, hidden2, output)
+    # Define our hidden layers & output. Build the network with these layers. Initialisation=None defaults to random weights.
+    hidden1 = Layer(input_dim=54,    output_dim=128,   activation_function=sigmoid, weight_initialisation=None, bias_initialisation=None)
+    output  = Layer(input_dim=128,   output_dim=1,     activation_function=sigmoid, weight_initialisation=None, bias_initialisation=None)
+    a.build(hidden1, output)
 
     # Training procedure - should be omitted from the final submission.
-    a.train(training_features, training_labels, num_epochs=100)
+    a.train(training_features, training_labels, num_epochs=200)
 
     # Saving the trained model
-    # a.save("newest_model.npz")
+    a.save("model_data.h5")
    
     # Testing that model has saved correctly
-    # classifier = ANN(optimiser=None, learning_rate=0.06)
-    # classifier.load("newest_model.npz")
-    # print(classifier)
+    classifier = ANN(learning_rate=0.1, momentum=None)
+    classifier.load("model_data.h5")
+    print(classifier)
 
-    #saved_predictions = classifier.predict(testing_features)
-    training_predictions = a.predict(training_features)
-    accuracy = 0
-    for i, prediction in enumerate(training_predictions):
-        if prediction == training_labels[i]:
-            accuracy += 1
-
-    print("Obtained accuracy: ", (accuracy / len(training_features)) * 100, "%")
-
-    
-    '''
-    trained_accuracy = 0
-
-    trained_predictions = a.predict(testing_features)
-    print(trained_predictions)
-    
-    for i, prediction in enumerate(trained_predictions):
-        if prediction == testing_labels[i]:
-            trained_accuracy += 1
-
-    #trained_accuracy = np.count_nonzero(trained_predictions == testing_labels)/testing_labels.shape[0]
-    
-    
-    #print(f"Test set accuracy for saved model: ", (saved_accuracy / len(testing_features)) * 100, "%")
-    print(f"Test set accuracy for trained model: ", (trained_accuracy / len(testing_features)) * 100, "%")
-    
-
-    # Optimisations:
-    # 1. Random shuffling of training set for each epoch.
-    # 2. Hyperparameter tuning.
-    # 3. SGD as opposed to standard - momentum, random noise, adaptive learning rate.
-    # 4. Regularisation techniques.
-    '''
-
+    testing_accuracy = test_accuracy(a.predict(testing_features), testing_labels, "testing")
+    training_accuracy = test_accuracy(a.predict(training_features), training_labels, "training")
+    saved_accuracy = test_accuracy(classifier.predict(testing_features), testing_labels, "saved model testing")
 
 
